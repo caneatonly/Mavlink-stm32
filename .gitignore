@@ -1,0 +1,37 @@
+# STM32CubeIDE
+.settings/
+.cproject
+.project
+.mxproject
+Debug/
+Release/
+build/
+*.launch
+
+# Build outputs
+*.o
+*.d
+*.elf
+*.hex
+*.bin
+*.map
+*.list
+*.su
+
+# STM32CubeMX backup
+*.ioc.bak
+MX_Device.json
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# Temporary files
+*.log
+*.tmp
