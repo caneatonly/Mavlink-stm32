@@ -46,6 +46,7 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
     App/common/ring_buffer.c
+    App/vendor_protocol/vendor_protocol.c
 )
 
 # Add include paths
