@@ -31,7 +31,8 @@ extern "C" {
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "../../App/common/types.h"
+#include "../../App/common/config.h"
 /* USER CODE END Includes */
 
 /* Exported types ------------------------------------------------------------*/
@@ -53,7 +54,10 @@ extern "C" {
 void Error_Handler(void);
 
 /* USER CODE BEGIN EFP */
-
+// 全局统计变量声明
+#if DEBUG_STATS_ENABLE
+extern SystemStats_t g_stats;
+#endif
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/

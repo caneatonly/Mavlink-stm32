@@ -19,13 +19,13 @@
  * @brief 厂家协议帧解析状态
  */
 typedef enum {
-    VENDOR_PARSE_IDLE = 0,      ///< 空闲，等待帧头
-    VENDOR_PARSE_HEADER1,       ///< 收到第一字节
-    VENDOR_PARSE_HEADER2,       ///< 收到第二字节
-    VENDOR_PARSE_HEADER3,       ///< 收到第三字节
-    VENDOR_PARSE_LENGTH,        ///< 收到长度字节
-    VENDOR_PARSE_PAYLOAD,       ///< 接收Payload中
-    VENDOR_PARSE_XOR            ///< 接收XOR校验
+    VENDOR_PARSE_IDLE = 0,      // 空闲，等待帧头
+    VENDOR_PARSE_HEADER1,       // 收到第一字节
+    VENDOR_PARSE_HEADER2,       // 收到第二字节
+    VENDOR_PARSE_HEADER3,       // 收到第三字节
+    VENDOR_PARSE_LENGTH,        // 收到长度字节
+    VENDOR_PARSE_PAYLOAD,       // 接收Payload中
+    VENDOR_PARSE_XOR            // 接收XOR校验
 } VendorParseState_t;
 
 /**
@@ -33,12 +33,12 @@ typedef enum {
  * @note  流式状态机，支持半包、粘包、错误恢复
  */
 typedef struct {
-    VendorParseState_t state;   ///< 当前状态
-    uint8_t  is_status_frame;   ///< 1=状态帧(FC 2C 55), 0=控制帧(FB 2C AA)
-    uint8_t  length;            ///< LEN字段值（命令2字节+数据N字节）
-    uint8_t  payload[64];       ///< Payload缓冲区（最大62字节）
-    uint8_t  index;             ///< 当前接收索引
-    uint8_t  xor_calc;          ///< XOR校验计算值
+    VendorParseState_t state;   // 当前状态
+    uint8_t  is_status_frame;   // 1=状态帧(FC 2C 55), 0=控制帧(FB 2C AA)
+    uint8_t  length;            // LEN字段值（命令2字节+数据N字节）
+    uint8_t  payload[64];       // Payload缓冲区（最大62字节）
+    uint8_t  index;             // 当前接收索引
+    uint8_t  xor_calc;          // XOR校验计算值
 } VendorParser_t;
 
 /**

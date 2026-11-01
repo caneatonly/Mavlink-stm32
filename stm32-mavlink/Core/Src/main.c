@@ -21,11 +21,16 @@
 #include "usart.h"
 #include "gpio.h"
 
-/* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "config.h"
 #include "types.h"
 #include "ring_buffer.h"
+#include "vendor_protocol.h"
+#include "mavlink_handler.h"
+#include "laser_fsm.h"
+#include "target_validator.h"
+#include <string.h>
+#include <stdbool.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -46,99 +51,139 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-// UART接收缓冲
+/* ========== 协议解析器 ========== */
+static VendorParser_t vendor_parser;
+static GimbalStatus_t gimbal_status;
+
+/* ========== 激光控制状态机 ========== */
+static LaserControl_t laser_ctrl;
+
+/* ========== UART单字节接收缓冲 ========== */
 static uint8_t uart1_rx_byte;
 static uint8_t uart2_rx_byte;
 
+/* ========== Ring Buffer ========== */
 static uint8_t uart1_rx_buf[UART1_RX_BUFFER_SIZE];
 static uint8_t uart2_rx_buf[UART2_RX_BUFFER_SIZE];
-
 static RingBuffer_t rb_uart1;
 static RingBuffer_t rb_uart2;
 
-// 系统统计
+/* ========== UART发送缓冲 ========== */
+static uint8_t uart1_tx_buf[280];  // MAVLink最大帧长
+static uint8_t uart2_tx_buf[32];   // 厂家协议最大帧19字节
+
+/* ========== UART发送状态标志 ========== */
+static volatile bool uart1_tx_busy = false;
+static volatile bool uart2_tx_busy = false;
+
+/* ========== 统计信息 ========== */
 #if DEBUG_STATS_ENABLE
 SystemStats_t g_stats = {0};
 #endif
-
-// 超时检测
-static uint32_t last_gimbal_status_time = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
-// LED调试函数
-static void Debug_LED_On(void);
-static void Debug_LED_Off(void);
-static void Debug_LED_Toggle(void);
-static void Debug_LED_Blink(uint8_t count);
-static void Debug_LED_FastBlink(uint8_t count);
+static void ProcessGimbalStatus(void);
+static bool SendToPixhawk(uint8_t *data, uint16_t len);
+static bool SendToGimbal(uint8_t *data, uint8_t len);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
 /**
- * @brief LED控制函数 - 点亮
+ * @brief 非阻塞发送数据到Pixhawk (UART1)
+ * @param data 发送缓冲区指针
+ * @param len  数据长度
+ * @return true=成功启动发送, false=UART忙
+ * @note  发送期间data缓冲区不能被修改
  */
-static void Debug_LED_On(void)
+static bool SendToPixhawk(uint8_t *data, uint16_t len)
 {
-#if DEBUG_LED_ENABLE
-    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);  // PC13低电平点亮
-#endif
-}
-
-/**
- * @brief LED控制函数 - 熄灭
- */
-static void Debug_LED_Off(void)
-{
-#if DEBUG_LED_ENABLE
-    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);    // PC13高电平熄灭
-#endif
-}
-
-/**
- * @brief LED控制函数 - 翻转
- */
-static void Debug_LED_Toggle(void)
-{
-#if DEBUG_LED_ENABLE
-    HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
-#endif
-}
-
-/**
- * @brief LED闪烁指示（慢速500ms间隔）
- * @param count 闪烁次数
- */
-static void Debug_LED_Blink(uint8_t count)
-{
-#if DEBUG_LED_ENABLE
-    for (uint8_t i = 0; i < count; i++) {
-        Debug_LED_On();
-        HAL_Delay(500);
-        Debug_LED_Off();
-        HAL_Delay(500);
+    if (!uart1_tx_busy) {
+        uart1_tx_busy = true;
+        if (HAL_UART_Transmit_IT(&huart1, data, len) == HAL_OK) {
+            return true;
+        } else {
+            uart1_tx_busy = false;  // 发送失败，清除标志
+            return false;
+        }
     }
-#endif
+    return false;  // UART忙，丢弃本次发送
 }
 
 /**
- * @brief LED快闪指示（快速100ms间隔）
- * @param count 闪烁次数
+ * @brief 非阻塞发送数据到吊舱 (UART2)
+ * @param data 发送缓冲区指针
+ * @param len  数据长度
+ * @return true=成功启动发送, false=UART忙
+ * @note  发送期间data缓冲区不能被修改
  */
-static void Debug_LED_FastBlink(uint8_t count)
+static bool SendToGimbal(uint8_t *data, uint8_t len)
 {
-#if DEBUG_LED_ENABLE
-    for (uint8_t i = 0; i < count; i++) {
-        Debug_LED_On();
-        HAL_Delay(100);
-        Debug_LED_Off();
-        HAL_Delay(100);
+    if (!uart2_tx_busy) {
+        uart2_tx_busy = true;
+        if (HAL_UART_Transmit_IT(&huart2, data, len) == HAL_OK) {
+            return true;
+        } else {
+            uart2_tx_busy = false;  // 发送失败，清除标志
+            return false;
+        }
     }
-#endif
+    return false;  // UART忙，丢弃本次发送
+}
+
+/**
+ * @brief 处理吊舱状态（核心控制逻辑）
+ * @note  在主循环中调用，每收到完整状态帧执行一次（50Hz）
+ */
+static void ProcessGimbalStatus(void)
+{
+    /* ===== 步骤1: 更新激光状态机 ===== */
+    LaserAction_t action = Laser_Update(&laser_ctrl, &gimbal_status);
+
+    /* ===== 步骤2: 执行激光控制命令 ===== */
+    if (action == LASER_ACTION_START) {
+        // 启动激光测距
+        uint8_t len = Vendor_BuildLaserStartFrame(uart2_tx_buf);
+        if (SendToGimbal(uart2_tx_buf, len)) {
+            // 确认发送成功
+            Laser_ConfirmStart(&laser_ctrl);
+
+            #if DEBUG_STATS_ENABLE
+            g_stats.laser_start_count++;
+            #endif
+        }
+    }
+    else if (action == LASER_ACTION_STOP) {
+        // 停止激光测距
+        uint8_t len = Vendor_BuildLaserStopFrame(uart2_tx_buf);
+        if (SendToGimbal(uart2_tx_buf, len)) {
+            // 确认发送成功
+            Laser_ConfirmStop(&laser_ctrl);
+
+            #if DEBUG_STATS_ENABLE
+            g_stats.laser_stop_count++;
+            #endif
+        }
+    }
+
+    /* ===== 步骤3: 目标位置验证与上报 ===== */
+    if (Laser_IsActive(&laser_ctrl)) {
+        TargetPosition_t target;
+
+        // 验证坐标有效性
+        if (Target_Validate(&gimbal_status, &target)) {
+            // 构建MAVLink目标位置消息
+            uint16_t tx_len;
+            if (MAVLink_SendTargetPosition(&target, uart1_tx_buf, &tx_len)) {
+                // 发送给Pixhawk（非阻塞）
+                SendToPixhawk(uart1_tx_buf, tx_len);
+            }
+        }
+    }
 }
 
 /* USER CODE END 0 */
@@ -175,16 +220,21 @@ int main(void)
   MX_USART1_UART_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-  // 初始化环形缓冲区
+  // 初始化协议解析器
+  Vendor_ParserInit(&vendor_parser);
+  MAVLink_Init();
+  Laser_Init(&laser_ctrl);
+
+  // 初始化Ring Buffer
   RingBuffer_Init(&rb_uart1, uart1_rx_buf, UART1_RX_BUFFER_SIZE);
   RingBuffer_Init(&rb_uart2, uart2_rx_buf, UART2_RX_BUFFER_SIZE);
+
+  // 清零状态
+  memset(&gimbal_status, 0, sizeof(gimbal_status));
 
   // 启动UART中断接收
   HAL_UART_Receive_IT(&huart1, &uart1_rx_byte, 1);
   HAL_UART_Receive_IT(&huart2, &uart2_rx_byte, 1);
-
-  // 启动指示：LED闪3次
-  Debug_LED_Blink(3);
 
   /* USER CODE END 2 */
 
@@ -192,9 +242,58 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    // 测试：LED心跳闪烁（1秒1次）
-    Debug_LED_Toggle();
-    HAL_Delay(1000);
+    /* ===== 处理UART1数据（MAVLink） ===== */
+    while (RingBuffer_Available(&rb_uart1) > 0) {
+      uint8_t byte;
+      RingBuffer_Read(&rb_uart1, &byte);
+
+      RoiCommand_t roi;
+      MAVLinkParseResult_t result = MAVLink_ParseByte(byte, &roi);
+
+      if (result == MAVLINK_PARSE_RESULT_ROI_CMD) {
+        // 转换为吊舱地理指向命令
+        uint8_t len = Vendor_BuildGeoPointingFrame(
+          uart2_tx_buf,
+          roi.lon_e7,  // 厂家协议：经度在前
+          roi.lat_e7,  // 纬度在后
+          roi.alt_m
+        );
+
+        // 发送给吊舱（非阻塞）
+        if (SendToGimbal(uart2_tx_buf, len)) {
+          #if DEBUG_STATS_ENABLE
+          g_stats.geo_frames_sent++;
+          #endif
+        }
+      }
+    }
+
+    /* ===== 处理UART2数据（吊舱协议） ===== */
+    while (RingBuffer_Available(&rb_uart2) > 0) {
+      uint8_t byte;
+      RingBuffer_Read(&rb_uart2, &byte);
+
+      VendorParseResult_t result = Vendor_ParseByte(&vendor_parser, byte);
+
+      if (result == VENDOR_PARSE_RESULT_STATUS_OK) {
+        // 成功解析状态帧
+        if (Vendor_ExtractStatus(vendor_parser.payload, &gimbal_status)) {
+          gimbal_status.timestamp_ms = HAL_GetTick();
+
+          #if DEBUG_STATS_ENABLE
+          g_stats.vendor_parse_ok++;
+          #endif
+
+          // 处理吊舱状态（核心控制逻辑）
+          ProcessGimbalStatus();
+        }
+      }
+      else if (result == VENDOR_PARSE_RESULT_ERROR) {
+        #if DEBUG_STATS_ENABLE
+        g_stats.vendor_parse_error++;
+        #endif
+      }
+    }
 
     /* USER CODE END WHILE */
 
@@ -246,24 +345,51 @@ void SystemClock_Config(void)
 
 /**
  * @brief UART接收完成回调函数
- * @note  在中断中被调用，将字节放入环形缓冲区
+ * @note  仅负责将字节快速搬运到Ring Buffer，立即返回
+ *        中断耗时：<1μs
  */
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
     if (huart == &huart1) {
+        /* ===== UART1: Pixhawk MAVLink ===== */
+
+        // 写入Ring Buffer
         RingBuffer_Write(&rb_uart1, uart1_rx_byte);
-#if DEBUG_STATS_ENABLE
+
+        #if DEBUG_STATS_ENABLE
         g_stats.uart1_rx_bytes++;
-#endif
-        HAL_UART_Receive_IT(&huart1, &uart1_rx_byte, 1);  // 重启接收
+        #endif
+
+        // 重启接收
+        HAL_UART_Receive_IT(&huart1, &uart1_rx_byte, 1);
     }
 
-    if (huart == &huart2) {
+    else if (huart == &huart2) {
+        /* ===== UART2: 吊舱厂家协议 ===== */
+
+        // 写入Ring Buffer
         RingBuffer_Write(&rb_uart2, uart2_rx_byte);
-#if DEBUG_STATS_ENABLE
+
+        #if DEBUG_STATS_ENABLE
         g_stats.uart2_rx_bytes++;
-#endif
-        HAL_UART_Receive_IT(&huart2, &uart2_rx_byte, 1);  // 重启接收
+        #endif
+
+        // 重启接收
+        HAL_UART_Receive_IT(&huart2, &uart2_rx_byte, 1);
+    }
+}
+
+/**
+ * @brief UART发送完成回调函数
+ * @note  清除发送忙标志，允许下次发送
+ */
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
+{
+    if (huart == &huart1) {
+        uart1_tx_busy = false;
+    }
+    else if (huart == &huart2) {
+        uart2_tx_busy = false;
     }
 }
 

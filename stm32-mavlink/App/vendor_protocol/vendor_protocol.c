@@ -158,7 +158,6 @@ uint8_t Vendor_BuildLaserStartFrame(uint8_t *out_buf)
     *p++ = 0x00;
 
     // 数据区（4字节）
-    // 按厂家示例：01 00 00 00（连续测距1Hz）
     *p++ = 0x01;
     *p++ = 0x00;
     *p++ = 0x00;

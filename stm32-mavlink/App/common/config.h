@@ -64,13 +64,13 @@ typedef enum {
  * @brief 稳定跟踪去抖帧数
  * @note  50Hz状态反馈，3帧约60ms
  */
-#define STABLE_TRACKING_CONFIRM_FRAMES  3
+#define STABLE_CONFIRM_FRAMES  3
 
 /**
  * @brief 激光连续测距最大时长（毫秒）
  * @note  厂家建议≤15分钟，软件设10分钟安全余量
  */
-#define LASER_MAX_DURATION_MS    (10 * 60 * 1000)
+#define LASER_TIMEOUT_MS    (10 * 60 * 1000)
 
 /**
  * @brief 吊舱状态超时阈值（毫秒）
@@ -82,7 +82,7 @@ typedef enum {
  * @brief 目标坐标上报最小间隔（毫秒）
  * @note  激光1Hz测距，上报频率≤1Hz
  */
-#define TARGET_REPORT_RATE_MS    1000
+#define TARGET_REPORT_INTERVAL_MS    1000
 
 /* ============ UART缓冲区大小 ============ */
 
@@ -101,28 +101,27 @@ typedef enum {
 /* ============ MAVLink配置 ============ */
 
 /**
- * @brief Pixhawk系统ID
- * @note  典型值为1，实际应根据飞控配置确认
+ * @brief Pixhawk系统ID（用于发送消息时的目标和发送者身份）
+ * @note  STM32作为透明协议转换器，使用Pixhawk身份代发
  */
-#define MAVLINK_SYSTEM_ID       1
+#define MAVLINK_PIXHAWK_SYSTEM_ID       1
 
 /**
- * @brief 目标组件ID
- * @note  0表示所有组件，实际应根据飞控配置确认
+ * @brief Pixhawk组件ID
  */
-#define MAVLINK_COMPONENT_ID    0
+#define MAVLINK_PIXHAWK_COMPONENT_ID    1
 
 /**
- * @brief 本设备系统ID
- * @note  作为MAVLink消息发送者的系统ID
+ * @brief 接收时是否启用目标系统ID过滤
+ * @note  点对点UART连接，无需过滤
  */
-#define MAVLINK_OUR_SYSTEM_ID   100
+#define MAVLINK_ENABLE_TARGET_FILTER    0
 
 /**
- * @brief 本设备组件ID
- * @note  作为MAVLink消息发送者的组件ID（云台组件）
+ * @brief 是否启用Frame类型严格校验
+ * @note  0=接受所有frame类型，测试后根据实际情况调整
  */
-#define MAVLINK_OUR_COMPONENT_ID  154  // MAV_COMP_ID_GIMBAL
+#define MAVLINK_FRAME_STRICT_CHECK      0
 
 /* ============ 坐标有效范围 ============ */
 

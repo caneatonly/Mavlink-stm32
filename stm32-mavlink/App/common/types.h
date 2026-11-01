@@ -65,9 +65,6 @@ typedef struct {
     LaserState_t state;             ///< 当前状态
     uint8_t  stable_count;          ///< 稳定跟踪连续帧计数
     uint32_t start_time_ms;         ///< 激光开启时刻（用于超时检测）
-    uint32_t last_report_time_ms;   ///< 上次上报时刻（用于频率限制）
-    int32_t  last_lon_e7;           ///< 上次上报的经度（用于新鲜度检测）
-    int32_t  last_lat_e7;           ///< 上次上报的纬度
 } LaserControl_t;
 
 /* ============ ROI命令数据 ============ */
@@ -81,6 +78,7 @@ typedef struct {
     int32_t  lon_e7;       ///< 经度×10^7 (from COMMAND_INT.y)
     float    alt_m;        ///< 海拔高度(米) (from COMMAND_INT.z)
     uint8_t  frame;        ///< 高度基准 (MAV_FRAME)
+    uint32_t timestamp_ms; ///< 接收时刻时间戳
     bool     valid;        ///< 数据有效标志
 } RoiCommand_t;
 
@@ -144,17 +142,22 @@ typedef enum {
  * @note  用于调试和监控
  */
 typedef struct {
-    uint32_t uart1_rx_bytes;        ///< UART1接收总字节数
-    uint32_t uart2_rx_bytes;        ///< UART2接收总字节数
-    uint32_t mavlink_parse_ok;      ///< MAVLink解析成功计数
-    uint32_t mavlink_parse_error;   ///< MAVLink解析错误计数
-    uint32_t vendor_parse_ok;       ///< 厂家协议解析成功计数
-    uint32_t vendor_parse_error;    ///< 厂家协议解析错误计数
-    uint32_t roi_commands_received; ///< 接收ROI命令计数
-    uint32_t geo_frames_sent;       ///< 发送地理指向帧计数
-    uint32_t laser_start_count;     ///< 激光启动计数
-    uint32_t laser_stop_count;      ///< 激光停止计数
-    uint32_t target_reports_sent;   ///< 目标坐标上报计数
+    uint32_t uart1_rx_bytes;            ///< UART1接收总字节数
+    uint32_t uart2_rx_bytes;            ///< UART2接收总字节数
+
+    // MAVLink统计
+    uint32_t mavlink_roi_received;      ///< 接收ROI命令计数
+    uint32_t mavlink_invalid_coords;    ///< 坐标越界拒绝计数
+    uint32_t mavlink_frame_rejected;    ///< Frame类型拒绝计数
+    uint32_t mavlink_wrong_target;      ///< 系统ID不匹配计数
+    uint32_t mavlink_target_sent;       ///< 目标位置上报计数
+
+    // 厂家协议统计
+    uint32_t vendor_parse_ok;           ///< 厂家协议解析成功计数
+    uint32_t vendor_parse_error;        ///< 厂家协议解析错误计数
+    uint32_t geo_frames_sent;           ///< 发送地理指向帧计数
+    uint32_t laser_start_count;         ///< 激光启动计数
+    uint32_t laser_stop_count;          ///< 激光停止计数
 } SystemStats_t;
 
 #endif /* __TYPES_H__ */

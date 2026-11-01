@@ -47,6 +47,9 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
     App/common/ring_buffer.c
     App/vendor_protocol/vendor_protocol.c
+    App/mavlink_handler/mavlink_handler.c
+    App/laser_control/target_validator.c
+    App/laser_control/laser_fsm.c
 )
 
 # Add include paths
@@ -55,6 +58,8 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     App/common
     App/vendor_protocol
     App/mavlink_handler
+    App/mavlink_handler/mavlink_c_lib
+    App/mavlink_handler/mavlink_c_lib/common
     App/laser_control
     App/system
 )

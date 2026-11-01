@@ -1,3 +1,4 @@
 build
 mx.scratch
 !.settings
+App/mavlink_handler/mavlink_c_lib/*
