@@ -23,7 +23,9 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "config.h"
+#include "types.h"
+#include "ring_buffer.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -44,17 +46,100 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
+// UART接收缓冲
+static uint8_t uart1_rx_byte;
+static uint8_t uart2_rx_byte;
 
+static uint8_t uart1_rx_buf[UART1_RX_BUFFER_SIZE];
+static uint8_t uart2_rx_buf[UART2_RX_BUFFER_SIZE];
+
+static RingBuffer_t rb_uart1;
+static RingBuffer_t rb_uart2;
+
+// 系统统计
+#if DEBUG_STATS_ENABLE
+SystemStats_t g_stats = {0};
+#endif
+
+// 超时检测
+static uint32_t last_gimbal_status_time = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
-
+// LED调试函数
+static void Debug_LED_On(void);
+static void Debug_LED_Off(void);
+static void Debug_LED_Toggle(void);
+static void Debug_LED_Blink(uint8_t count);
+static void Debug_LED_FastBlink(uint8_t count);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+/**
+ * @brief LED控制函数 - 点亮
+ */
+static void Debug_LED_On(void)
+{
+#if DEBUG_LED_ENABLE
+    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);  // PC13低电平点亮
+#endif
+}
+
+/**
+ * @brief LED控制函数 - 熄灭
+ */
+static void Debug_LED_Off(void)
+{
+#if DEBUG_LED_ENABLE
+    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);    // PC13高电平熄灭
+#endif
+}
+
+/**
+ * @brief LED控制函数 - 翻转
+ */
+static void Debug_LED_Toggle(void)
+{
+#if DEBUG_LED_ENABLE
+    HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
+#endif
+}
+
+/**
+ * @brief LED闪烁指示（慢速500ms间隔）
+ * @param count 闪烁次数
+ */
+static void Debug_LED_Blink(uint8_t count)
+{
+#if DEBUG_LED_ENABLE
+    for (uint8_t i = 0; i < count; i++) {
+        Debug_LED_On();
+        HAL_Delay(500);
+        Debug_LED_Off();
+        HAL_Delay(500);
+    }
+#endif
+}
+
+/**
+ * @brief LED快闪指示（快速100ms间隔）
+ * @param count 闪烁次数
+ */
+static void Debug_LED_FastBlink(uint8_t count)
+{
+#if DEBUG_LED_ENABLE
+    for (uint8_t i = 0; i < count; i++) {
+        Debug_LED_On();
+        HAL_Delay(100);
+        Debug_LED_Off();
+        HAL_Delay(100);
+    }
+#endif
+}
 
 /* USER CODE END 0 */
 
@@ -90,6 +175,16 @@ int main(void)
   MX_USART1_UART_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
+  // 初始化环形缓冲区
+  RingBuffer_Init(&rb_uart1, uart1_rx_buf, UART1_RX_BUFFER_SIZE);
+  RingBuffer_Init(&rb_uart2, uart2_rx_buf, UART2_RX_BUFFER_SIZE);
+
+  // 启动UART中断接收
+  HAL_UART_Receive_IT(&huart1, &uart1_rx_byte, 1);
+  HAL_UART_Receive_IT(&huart2, &uart2_rx_byte, 1);
+
+  // 启动指示：LED闪3次
+  Debug_LED_Blink(3);
 
   /* USER CODE END 2 */
 
@@ -97,6 +192,10 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+    // 测试：LED心跳闪烁（1秒1次）
+    Debug_LED_Toggle();
+    HAL_Delay(1000);
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -144,6 +243,29 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+/**
+ * @brief UART接收完成回调函数
+ * @note  在中断中被调用，将字节放入环形缓冲区
+ */
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+    if (huart == &huart1) {
+        RingBuffer_Write(&rb_uart1, uart1_rx_byte);
+#if DEBUG_STATS_ENABLE
+        g_stats.uart1_rx_bytes++;
+#endif
+        HAL_UART_Receive_IT(&huart1, &uart1_rx_byte, 1);  // 重启接收
+    }
+
+    if (huart == &huart2) {
+        RingBuffer_Write(&rb_uart2, uart2_rx_byte);
+#if DEBUG_STATS_ENABLE
+        g_stats.uart2_rx_bytes++;
+#endif
+        HAL_UART_Receive_IT(&huart2, &uart2_rx_byte, 1);  // 重启接收
+    }
+}
 
 /* USER CODE END 4 */
 
