@@ -48,8 +48,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     App/common/ring_buffer.c
     App/vendor_protocol/vendor_protocol.c
     App/mavlink_handler/mavlink_handler.c
-    App/laser_control/target_validator.c
-    App/laser_control/laser_fsm.c
+    App/status_reporter/status_reporter.c
 )
 
 # Add include paths
@@ -58,11 +57,10 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     App/common
     App/vendor_protocol
     App/mavlink_handler
-    App/mavlink_handler/mavlink_c_lib
-    App/mavlink_handler/mavlink_c_lib/common
-    App/laser_control
-    App/system
+    App/status_reporter
 )
+
+target_include_directories(${CMAKE_PROJECT_NAME} SYSTEM PRIVATE ThirdParty/mavlink)
 
 # Add project symbols (macros)
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
@@ -75,6 +73,15 @@ list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
 # Add linked libraries
 target_link_libraries(${CMAKE_PROJECT_NAME}
     stm32cubemx
+    m
 
     # Add user defined libraries
+)
+
+add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_OBJCOPY} -O ihex $<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+            ${CMAKE_CURRENT_BINARY_DIR}/tz130tm-native.hex
+    COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+            ${CMAKE_CURRENT_BINARY_DIR}/tz130tm-native.bin
+    VERBATIM
 )

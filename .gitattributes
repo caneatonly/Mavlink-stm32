@@ -1,0 +1,3 @@
+# Keep upstream header bytes consistent with source-sha256.json.
+# Upstream generated whitespace is preserved rather than reformatted.
+stm32-mavlink/ThirdParty/mavlink/** -text -whitespace

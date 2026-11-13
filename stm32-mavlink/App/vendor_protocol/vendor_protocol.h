@@ -50,35 +50,9 @@ typedef enum {
     VENDOR_PARSE_RESULT_ERROR           ///< 解析错误（XOR不匹配等）
 } VendorParseResult_t;
 
-/* ========== 帧构建函数 ========== */
-
-/**
- * @brief 构建地理指引/跟踪帧 (0x001B或0x001C)
- * @param out_buf  输出缓冲区（至少19字节）
- * @param lon_e7   目标经度×10^7
- * @param lat_e7   目标纬度×10^7
- * @param alt_m    目标海拔高度(米)
- * @return 实际字节数（19）
- * @note  命令类型由config.h中的USE_GEO_POINTING_0x001B决定
- */
-uint8_t Vendor_BuildGeoPointingFrame(uint8_t *out_buf,
-                                     int32_t lon_e7,
-                                     int32_t lat_e7,
-                                     float alt_m);
-
-/**
- * @brief 构建激光启动帧 (0x003E)
- * @param out_buf 输出缓冲区（至少11字节）
- * @return 实际字节数（11）
- */
-uint8_t Vendor_BuildLaserStartFrame(uint8_t *out_buf);
-
-/**
- * @brief 构建激光停止帧 (0x003F)
- * @param out_buf 输出缓冲区（至少11字节）
- * @return 实际字节数（11）
- */
-uint8_t Vendor_BuildLaserStopFrame(uint8_t *out_buf);
+/* 0x0072, out_buf requires 11 bytes; inputs are signed centidegrees. */
+uint8_t Vendor_BuildAnglePointingFrame(uint8_t *out_buf, int16_t yaw_deg100,
+                                      int16_t pitch_deg100);
 
 /* ========== 帧解析函数 ========== */
 
