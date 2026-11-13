@@ -7,7 +7,6 @@
  */
 
 #include "vendor_protocol.h"
-#include "config.h"
 #include <string.h>
 
 /* ========== 辅助函数实现 ========== */
@@ -50,11 +49,10 @@ void Vendor_WriteLE_Int16(uint8_t *buf, int16_t value)
  */
 int32_t Vendor_ReadLE_Int32(const uint8_t *buf)
 {
-    int32_t value = 0;
-    value |= ((int32_t)buf[0]);
-    value |= ((int32_t)buf[1] << 8);
-    value |= ((int32_t)buf[2] << 16);
-    value |= ((int32_t)buf[3] << 24);
+    uint32_t bits = (uint32_t)buf[0] | ((uint32_t)buf[1] << 8) |
+                    ((uint32_t)buf[2] << 16) | ((uint32_t)buf[3] << 24);
+    int32_t value;
+    memcpy(&value, &bits, sizeof(value));
     return value;
 }
 
@@ -80,129 +78,18 @@ uint16_t Vendor_ReadLE_UInt16(const uint8_t *buf)
     return value;
 }
 
-/* ========== 帧构建函数实现 ========== */
-
-/**
- * @brief 构建地理指引/跟踪帧
- * @note  帧格式：FB 2C AA LEN CMD(LE) LON(LE) LAT(LE) ALT(LE) XOR
- *        总长19字节：3帧头 + 1长度 + 2命令 + 12数据 + 1校验
- */
-uint8_t Vendor_BuildGeoPointingFrame(uint8_t *out_buf,
-                                     int32_t lon_e7,
-                                     int32_t lat_e7,
-                                     float alt_m)
-{
-    uint8_t *p = out_buf;
-
-    // 帧头 (3字节)
-    *p++ = VENDOR_HEADER_CTRL_0;  // 0xFB
-    *p++ = VENDOR_HEADER_CTRL_1;  // 0x2C
-    *p++ = VENDOR_HEADER_CTRL_2;  // 0xAA
-
-    // LEN = 2(命令) + 12(数据) = 14 = 0x0E
-    uint8_t len = 0x0E;
-    *p++ = len;
-
-    // 命令字（小端序）
-#if USE_GEO_POINTING_0x001B
-    uint16_t cmd = VENDOR_CMD_GEO_POINTING;  // 0x001B
-#elif USE_GEO_TRACKING_0x001C
-    uint16_t cmd = VENDOR_CMD_GEO_TRACKING;  // 0x001C
-#else
-    #error "Must define USE_GEO_POINTING_0x001B or USE_GEO_TRACKING_0x001C"
-#endif
-
-    *p++ = (uint8_t)(cmd & 0xFF);       // 低字节
-    *p++ = (uint8_t)((cmd >> 8) & 0xFF); // 高字节
-
-    // 数据区（12字节）
-    // 注意：经度在前，纬度在后
-    Vendor_WriteLE_Int32(p, lon_e7);  // 经度×10^7
-    p += 4;
-
-    Vendor_WriteLE_Int32(p, lat_e7);  // 纬度×10^7
-    p += 4;
-
-    // 海拔：米→分米（×10）
-    int32_t alt_dm = (int32_t)(alt_m * 10.0f);
-    Vendor_WriteLE_Int32(p, alt_dm);  // 海拔×10
-    p += 4;
-
-    // XOR校验：从LEN(byte[3])到数据末尾(byte[17])，共14字节
-    uint8_t xor_val = Vendor_CalcXOR(out_buf + 3, 14);
-    *p++ = xor_val;
-
-    return 19;  // 总字节数
-}
-
-/**
- * @brief 构建激光启动帧
- * @note  帧格式：FB 2C AA 06 3E 00 01 00 00 00 XOR
- *        总长11字节：3帧头 + 1长度 + 2命令 + 4数据 + 1校验
- */
-uint8_t Vendor_BuildLaserStartFrame(uint8_t *out_buf)
-{
-    uint8_t *p = out_buf;
-
-    // 帧头
-    *p++ = VENDOR_HEADER_CTRL_0;  // 0xFB
-    *p++ = VENDOR_HEADER_CTRL_1;  // 0x2C
-    *p++ = VENDOR_HEADER_CTRL_2;  // 0xAA
-
-    // LEN = 2(命令) + 4(数据) = 6
-    uint8_t len = 0x06;
-    *p++ = len;
-
-    // 命令字 0x003E（小端）
-    *p++ = 0x3E;
-    *p++ = 0x00;
-
-    // 数据区（4字节）
-    *p++ = 0x01;
-    *p++ = 0x00;
-    *p++ = 0x00;
-    *p++ = 0x00;
-
-    // XOR校验：从LEN(byte[3])到数据末尾(byte[9])，共6字节
-    uint8_t xor_val = Vendor_CalcXOR(out_buf + 3, 6);
-    *p++ = xor_val;
-
-    return 11;  // 总字节数
-}
-
-/**
- * @brief 构建激光停止帧
- * @note  帧格式：FB 2C AA 06 3F 00 00 00 00 00 XOR
- *        总长11字节
- */
-uint8_t Vendor_BuildLaserStopFrame(uint8_t *out_buf)
-{
-    uint8_t *p = out_buf;
-
-    // 帧头
-    *p++ = VENDOR_HEADER_CTRL_0;  // 0xFB
-    *p++ = VENDOR_HEADER_CTRL_1;  // 0x2C
-    *p++ = VENDOR_HEADER_CTRL_2;  // 0xAA
-
-    // LEN = 2(命令) + 4(数据) = 6
-    uint8_t len = 0x06;
-    *p++ = len;
-
-    // 命令字 0x003F（小端）
-    *p++ = 0x3F;
-    *p++ = 0x00;
-
-    // 数据区（4字节全0）
-    *p++ = 0x00;
-    *p++ = 0x00;
-    *p++ = 0x00;
-    *p++ = 0x00;
-
-    // XOR校验
-    uint8_t xor_val = Vendor_CalcXOR(out_buf + 3, 6);
-    *p++ = xor_val;
-
-    return 11;  // 总字节数
+/* 0x0072: yaw/pitch are signed centidegrees, little endian. */
+uint8_t Vendor_BuildAnglePointingFrame(uint8_t *out_buf, int16_t yaw_deg100,
+                                      int16_t pitch_deg100) {
+    out_buf[0] = VENDOR_HEADER_CTRL_0;
+    out_buf[1] = VENDOR_HEADER_CTRL_1;
+    out_buf[2] = VENDOR_HEADER_CTRL_2;
+    out_buf[3] = 6;
+    Vendor_WriteLE_Int16(out_buf + 4, VENDOR_CMD_ANGLE_POINTING);
+    Vendor_WriteLE_Int16(out_buf + 6, yaw_deg100);
+    Vendor_WriteLE_Int16(out_buf + 8, pitch_deg100);
+    out_buf[10] = Vendor_CalcXOR(out_buf + 3, 7);
+    return 11;
 }
 
 /* ========== 帧解析函数实现 ========== */
@@ -328,6 +215,7 @@ bool Vendor_ExtractStatus(const uint8_t *payload, GimbalStatus_t *status)
     // 提取字段（按文档表14的偏移）
 
     // payload[1]: bit7 = 吊舱准备状态
+    status->self_test = data[1];
     status->gimbal_ready = (data[1] >> 7) & 0x01;
 
     // payload[6]: 伺服状态
@@ -338,6 +226,10 @@ bool Vendor_ExtractStatus(const uint8_t *payload, GimbalStatus_t *status)
 
     // payload[9..10]: 俯仰角×100 (int16 LE)
     status->pitch_deg100 = Vendor_ReadLE_Int16(&data[9]);
+    status->roll_deg100 = Vendor_ReadLE_Int16(&data[11]);
+    status->attitude_azimuth_deg100 = Vendor_ReadLE_Int16(&data[39]);
+    status->attitude_pitch_deg100 = Vendor_ReadLE_Int16(&data[41]);
+    status->attitude_roll_deg100 = Vendor_ReadLE_Int16(&data[43]);
 
     // payload[25..26]: 激光距离×0.1m (uint16 LE)
     status->laser_distance_dm = Vendor_ReadLE_UInt16(&data[25]);

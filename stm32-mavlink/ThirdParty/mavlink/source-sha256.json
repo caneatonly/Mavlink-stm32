@@ -1,0 +1,15 @@
+{
+  "checksum.h": "8d6cac8dee37e6d619f5aee9fdbbe83b837b8e05a645c5d44b0578ba45a09924",
+  "mavlink_types.h": "4ed80d00c174ea2b91e9169b1557d6c600fa28a93294a62cea0313f857b423a9",
+  "protocol.h": "97c339428f02583b105caab5cd7f601d2a4844cd5cfa130dd9004b4b327c0679",
+  "mavlink_helpers.h": "1218b3b8802d61fb9144937bb6e818850d854300881c94825b627cd3eedce565",
+  "mavlink_conversions.h": "374fcaae7eba6314bef2ab97a2394707f92925f4c899172ed3f9ad65c8d44765",
+  "mavlink_sha256.h": "2f9e6610227896776a4414127c22cf4f3a579e51055c95b6dea65afa32ad8340",
+  "minimal/mavlink.h": "612e6dddbaeae30b905d0c04cf47135f8a1e0a433ba9e88530b4ff11d2ef644a",
+  "minimal/minimal.h": "36341da86786501bc9b5e3bd8d222cf97cbf12e781c6d5a4f44dc98e427ae798",
+  "minimal/version.h": "3694f7d17a8c3a1431c162137c400f2fe4b33379f46485a2a7caa7069f7a574e",
+  "minimal/mavlink_msg_heartbeat.h": "da07ddf1f5cc9b414a48d34749f57cd4f57e31180405743394c6e677c1f1a367",
+  "common/mavlink_msg_command_long.h": "af927d7242ca5eddde47dcb1d8e1c040caf2a303e0635f939b09a11de981305b",
+  "common/mavlink_msg_command_ack.h": "bf1997e2a224e450e05bc39bb37f9c6d4c3ec48ba7b0b9e74a49dbf33bd69252",
+  "mavlink_get_info.h": "d64af08c57384019a6b1bad3940928717a60f18a13f627dc849d638b40ec08ee"
+}

@@ -35,3 +35,11 @@ Thumbs.db
 # Temporary files
 *.log
 *.tmp
+
+# Linked worktrees and Python caches
+.worktrees/
+__pycache__/
+*.py[cod]
+
+# This HEX is text input for protocol tests, not a firmware image.
+!stm32-mavlink/tests/data/telem2_mount_rx.hex

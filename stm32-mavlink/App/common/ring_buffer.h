@@ -17,8 +17,8 @@
 typedef struct {
     uint8_t  *buffer;   ///< 数据缓冲区指针
     uint16_t  size;     ///< 缓冲区大小
-    uint16_t  head;     ///< 写入位置
-    uint16_t  tail;     ///< 读取位置
+    volatile uint16_t head; ///< ISR producer publishes the write position
+    volatile uint16_t tail; ///< Foreground consumer publishes the read position
 } RingBuffer_t;
 
 /**

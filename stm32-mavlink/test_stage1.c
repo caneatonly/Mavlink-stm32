@@ -91,57 +91,15 @@ void test_ring_buffer(void)
 /**
  * @brief 测试配置和类型定义
  */
-void test_config_types(void)
-{
-    printf("\n========== 测试配置和类型定义 ==========\n");
-
-    // 测试1：配置宏
-    assert(UART1_RX_BUFFER_SIZE == 512);
-    assert(UART2_RX_BUFFER_SIZE == 256);
-    assert(STABLE_TRACKING_CONFIRM_FRAMES == 3);
-    assert(LASER_MAX_DURATION_MS == 600000);
-    test_pass("配置宏定义");
-
-    // 测试2：数据结构大小
-    GimbalStatus_t status;
-    RoiCommand_t roi;
-    TargetPosition_t target;
-    LaserControl_t laser;
-
-    memset(&status, 0, sizeof(status));
-    memset(&roi, 0, sizeof(roi));
-    memset(&target, 0, sizeof(target));
-    memset(&laser, 0, sizeof(laser));
-
-    printf("  GimbalStatus_t: %lu bytes\n", sizeof(GimbalStatus_t));
-    printf("  RoiCommand_t: %lu bytes\n", sizeof(RoiCommand_t));
-    printf("  TargetPosition_t: %lu bytes\n", sizeof(TargetPosition_t));
-    printf("  LaserControl_t: %lu bytes\n", sizeof(LaserControl_t));
-    test_pass("数据结构定义");
-
-    // 测试3：枚举值
-    assert(TRACKING_IDLE == 0x00);
-    assert(TRACKING_STABLE == 0x01);
-    assert(TRACKING_MEMORY == 0x02);
-    assert(TRACKING_LOST == 0x03);
-    assert(TRACKING_INTERCEPT == 0x05);
-    test_pass("跟踪状态枚举");
-
-    // 测试4：厂家命令字
-    assert(VENDOR_CMD_GEO_POINTING == 0x001B);
-    assert(VENDOR_CMD_LASER_START == 0x003E);
-    assert(VENDOR_CMD_LASER_STOP == 0x003F);
+void test_config_types(void) {
+    GimbalStatus_t status = {0};
+    assert(!status.valid);
+    assert(MAVLINK_GIMBAL_COMPONENT_ID == 154);
+    assert(MAVLINK_MOUNT_COMMAND == 205);
+    assert(MAVLINK_HEARTBEAT_PERIOD_MS == 1000);
+    assert(VENDOR_CMD_ANGLE_POINTING == 0x0072);
     assert(VENDOR_CMD_STATUS_FEEDBACK == 0x0014);
-    test_pass("厂家命令字定义");
-
-    // 测试5：坐标范围
-    assert(LAT_MIN_E7 == -900000000);
-    assert(LAT_MAX_E7 == 900000000);
-    assert(LON_MIN_E7 == -1800000000);
-    assert(LON_MAX_E7 == 1800000000);
-    test_pass("坐标范围定义");
-
-    printf(COLOR_GREEN "✓ 配置和类型定义所有测试通过！\n" COLOR_RESET);
+    test_pass("Native adapter configuration");
 }
 
 /**
