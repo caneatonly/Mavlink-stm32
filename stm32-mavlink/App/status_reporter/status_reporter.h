@@ -20,7 +20,7 @@ typedef struct {
 } StatusReporter_t;
 
 void StatusReporter_Init(StatusReporter_t *bridge, StatusWrite_t write_text, void *context);
-void StatusReporter_FeedStatus(StatusReporter_t *bridge, uint8_t byte);
+bool StatusReporter_FeedStatus(StatusReporter_t *bridge, uint8_t byte);
 bool StatusReporter_Report(StatusReporter_t *bridge, uint32_t now_ms);
 
 #endif

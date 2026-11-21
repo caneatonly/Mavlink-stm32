@@ -63,8 +63,11 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 target_include_directories(${CMAKE_PROJECT_NAME} SYSTEM PRIVATE ThirdParty/mavlink)
 
 # Add project symbols (macros)
+option(ENABLE_POINTING_AUTO_RESUME "Enable auto-resume after the TELEM2 order is verified" OFF)
+option(ENABLE_RANGE_REPORT "Send ID 86 position setpoints from tracked range results" OFF)
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
-    # Add user defined symbols
+    ENABLE_POINTING_AUTO_RESUME=$<BOOL:${ENABLE_POINTING_AUTO_RESUME}>
+    ENABLE_RANGE_REPORT=$<BOOL:${ENABLE_RANGE_REPORT}>
 )
 
 # Remove wrong libob.a library dependency when using cpp files

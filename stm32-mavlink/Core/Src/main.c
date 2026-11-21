@@ -83,6 +83,7 @@ static bool WriteToFlight(void *context, const uint8_t *data, uint16_t length) {
     (void)context;
     return HAL_UART_Transmit(&huart1, (uint8_t *)data, length, 100) == HAL_OK;
 }
+
 /* USER CODE END 0 */
 
 /**
@@ -121,6 +122,8 @@ int main(void)
     RingBuffer_Init(&rb_uart1, uart1_rx_buf, UART1_RX_BUFFER_SIZE);
     RingBuffer_Init(&rb_uart2, uart2_rx_buf, UART2_RX_BUFFER_SIZE);
     MAVLink_Init(&mavlink_bridge, WriteToFlight, WriteToGimbal, NULL);
+    MAVLink_ConfigureAutomation(&mavlink_bridge, ENABLE_POINTING_AUTO_RESUME,
+                                ENABLE_RANGE_REPORT);
     StatusReporter_Init(&status_reporter, WriteToComputer, NULL);
     HAL_UART_Receive_IT(&huart1, &uart1_rx_byte, 1);
     HAL_UART_Receive_IT(&huart2, &uart2_rx_byte, 1);
@@ -134,6 +137,7 @@ int main(void)
     if (boot_length > 0 && (size_t)boot_length < sizeof(boot)) {
         WriteToComputer(NULL, (const uint8_t *)boot, (uint16_t)boot_length);
     }
+  bool reported_tx_last_loop = false;
 /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -141,16 +145,26 @@ int main(void)
   while (1)
   {
     uint8_t byte;
+    MAVLink_UpdateTime(&mavlink_bridge, HAL_GetTick());
+    while (RingBuffer_Read(&rb_uart2, &byte)) {
+        if (StatusReporter_FeedStatus(&status_reporter, byte)) {
+            MAVLink_UpdateTime(&mavlink_bridge, HAL_GetTick());
+            MAVLink_ObserveGimbal(&mavlink_bridge, &status_reporter.status);
+        }
+    }
     while (RingBuffer_Read(&rb_uart1, &byte)) {
         MAVLink_FeedByte(&mavlink_bridge, byte);
     }
-    while (RingBuffer_Read(&rb_uart2, &byte)) {
-        StatusReporter_FeedStatus(&status_reporter, byte);
-    }
     uint32_t now_ms = HAL_GetTick();
     MAVLink_SendHeartbeatIfDue(&mavlink_bridge, now_ms);
-    MAVLink_Report(&mavlink_bridge, WriteToComputer, now_ms);
-    StatusReporter_Report(&status_reporter, now_ms);
+    /* Drain RX between a TX trace and the other debug output. */
+    reported_tx_last_loop = !reported_tx_last_loop &&
+        MAVLink_ReportTx(&mavlink_bridge, WriteToComputer, now_ms);
+    if (!reported_tx_last_loop) {
+        MAVLink_ReportControlOwner(&mavlink_bridge, WriteToComputer);
+        MAVLink_Report(&mavlink_bridge, WriteToComputer, now_ms);
+        StatusReporter_Report(&status_reporter, now_ms);
+    }
 
     /* USER CODE END WHILE */
 

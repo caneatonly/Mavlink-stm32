@@ -70,6 +70,7 @@ typedef enum {
  */
 #define VENDOR_CMD_ANGLE_POINTING   0x0072  ///< 数引，方位/俯仰角×100
 #define VENDOR_CMD_STATUS_FEEDBACK  0x0014  ///< 状态反馈
+#define VENDOR_SERVO_ANGLE_POINTING 0x04
 
 /**
  * @brief 厂家协议帧头定义

@@ -13,18 +13,55 @@ Mission Planner 点选“在此放置相机” → 飞控计算目标角度 → 
 | USART3 | PB10 TX | PB10 → USB-TTL RX，电脑接收调试文本 |
 | GND | 共地 | STM32、飞控、吊舱、USB-TTL 共地 |
 
-全部串口为 115200、8N1、无硬件流控。PB11 虽已由 CubeMX 配为 USART3 RX，本版没有使用接收功能，不需要连接。USB-TTL 从原先的 TELEM2 抓包用途改接 PB10；Mission Planner 继续通过飞控 USB 连接。
+全部串口为 115200、8N1、无硬件流控。PB11 虽已由 CubeMX 配为 USART3 RX，本版没有使用接收功能，不需要连接。USB-TTL 从原先的 TELEM2 抓包用途改接 PB10。Mission Planner 继续通过飞控 USB 连接。
+
+### 厂家 UI 接管与测距
+
+控制权通过现有 TELEM2 更改，无需增加接线。STM32 接收 Mission Planner（255/190）发给云台组件（1/154）的 `MAV_CMD_USER_1`。参数 1 为 1 时暂停数引转发，为 0 时恢复。当前自动交接固件复位后默认暂停。心跳和吊舱状态在两种模式下均正常处理。
+
+1. 如需做手动对照，在 Mission Planner 中运行 `tools/mission_planner/gimbal_control_owner.py` 并选择 No。等待 `[MODE] owner=flight`，再用 Mission Planner 地图点选。
+2. 画面到位后，在已连接飞控的 Mission Planner 中运行 `tools/mission_planner/gimbal_control_owner.py` 并选择 Yes。等待 STM32 日志出现 `[MODE] owner=ui` 再操作厂家 UI。飞控仍在发送角度时，`[CTRL]` 应显示 `result=ui_control`。
+3. 在厂家 UI 操作跟踪，并启动单次或连续测距。在串口助手观察 `[TARGET]` 中的距离和经纬高。该行是最新状态快照，重复显示同一个值不能确认又测量了一次。
+4. 退出厂家 UI 跟踪，确认 Mission Planner 的当前指向，再运行脚本并选择 No。收到 `[MODE] owner=flight` 后恢复飞控指引。
+
+脚本只提交控制权切换请求，STM32 的串口日志用于确认是否生效。切换依赖飞控将精确寻址的消息转发至已发现的云台组件，需在现有飞控台架上验收。
+
+### 地图指向自动交接与测距回传
+
+本工作树增加 Mission Planner 后台插件和飞控只读 Lua 脚本。沿用现有接线。插件安装一次后，继续使用原有「在此放置相机」并确认高度。插件监听原有 ROI 请求，收到飞控成功应答后，发给 STM32 一条 `MAV_CMD_USER_2 (31011)`，参数 1 为任务编号。
+
+1. 将 `GimbalPointingPlugin.dll` 放到 Mission Planner 安装目录的 `plugins` 中并重启。烧录默认 Release 探测固件。STM32 启动后处于暂停转发状态。点两个不同位置，观察 `[POINT] ... event=probe_first_205`。在台架上核对通知确实到达，以及通知后的第一条有效角度确实属于新点。建议抓取飞控至 STM32 的串口数据，核对从 A 到 B 再回 A 的顺序。
+2. 用厂家 UI 在稳定跟踪时启动单次或连续测距。STM32 从 `0x0014` 反馈读取坐标和距离，稳定跟踪且样本有效时生成 `SET_POSITION_TARGET_GLOBAL_INT`（ID 86），无需等待命令回显。首次有效样本立即处理，后续仅在距离或经纬高有变化时处理，最多每秒一次。探测版输出 `[RANGE] event=probe_86`。台架上需核对厂家坐标为 WGS84、目标高度为海拔。
+3. 台架确认后，按需启用两个编译开关。可以各自设为 `ON`，分开验证指向和回传。
+
+   ```powershell
+   cmake --preset Release -B build/Release-enabled -DENABLE_POINTING_AUTO_RESUME=ON -DENABLE_RANGE_REPORT=ON
+   cmake --build build/Release-enabled
+   ```
+
+   启用后，STM32 按任务编号开始一轮数引。新鲜 `FRAME` 两轴误差均小于 1°、目标稳定并持续 0.5 秒后，输出 `[POINT] ... event=arrived`，保持停发直到下一新编号。2 秒等不到角度，或 10 秒仍未到位，会保持停发并分别记录 `no_angle` 或 `not_settled`。用厂家 UI 跟踪并测距。`[RANGE] event=sent_86` 表示位置设定值已写入 USART1。
+4. 若需要在飞控日志里确认收包，将 `tools/ardupilot/record_gimbal_measurement.lua` 放入 SD 卡的 `APM/scripts`，开启 `SCR_ENABLE` 后重启。脚本校验并记录 ID 86，飞控日志条目为 `T086`。Lat/Lon 为度 × 10⁷，Alt 为米。台架如需查看未解锁日志，需启用未解锁时的日志记录。若已运行其他初始化 MAVLink 接收队列的脚本，应检查是否需要合并订阅。
+
+ID 86 寻址飞控 `1/1`，使用 `MAV_FRAME_GLOBAL=0` 和位置掩码 `0x0DF8`。经纬度为度 × 10⁷，厂家反馈高度按海拔米数填入。飞控在支持位置设定值的模式（如 Guided）下可能执行该指令，先在未解锁台架或 SITL 验证。
+
+默认 Release 的两个自动功能开关均为 OFF，用于先确认 TELEM2 实际时序和厂家单测反馈。自动指向只适用于已验证通知和角度先后关系的系统配置。当前 205 角度帧没有任务编号。心跳、手动控制权脚本和 `[TARGET]` 日志可用于台架。
+
+### 在 USART3 核对 USART1 发包
+
+串口助手以 115200、8N1 和文本模式打开 USART3。稳定跟踪且有有效坐标与距离时，`[UART1_TX] msgid=86 len=64 ... hex=` 后显示完整 MAVLink2 字节，包含帧头和 CRC。对照 `[RANGE]` 中的经纬高，测距距离也保留在该行。探测版显示 `result=probe`，仅预览封包。启用回传后，`result=sent` 表示 STM32 已完成 USART1 发送，`result=uart1_error` 表示发送失败。核对 STM32 封包可直接看 USART3。确认飞控收到时再查看飞控日志。
+
+USART3 同时显示心跳（ID 0）和 ACK（ID 77）。ACK 日志每 200 ms 最多显示一条，取最近一帧。
 
 ## 固件行为
 
 - 启动后立即发云台 HEARTBEAT，随后每 1000 ms 发送一次。sysid=1、compid=154、type=GIMBAL(26)、autopilot=INVALID(8)。心跳和 ACK 共用递增发送序号。心跳表示适配板在线，不代表吊舱已经到位。
-- 接收 source=1/1、target=1/154 或广播地址的 COMMAND_LONG（消息76），仅处理 command=205、param7=2。支持普通未签名 MAVLink2 和 MAVLink1；MAVLink2 末尾零截断由标准库补零，实测32字节载荷可正常解析。CRC 错误、未知消息、其他地址和其他命令不产生吊舱输出。未配置签名密钥，本版不执行带签名或扩展头标志的控制帧。
+- 飞控数引输入为 source=1/1、target=1/154 或广播地址的 COMMAND_LONG（消息76），command=205、param7=2。任务通知和手动切换来自地面站 255/190，要求精确寻址 1/154。支持普通未签名 MAVLink2 和 MAVLink1。MAVLink2 末尾零截断由标准库补零，实测32字节载荷可正常解析。CRC 错误、未知消息和其他地址不产生吊舱输出。
 - param3 为方位角输入，param1 为俯仰角输入，单位均为度。默认两轴取反映射（2026-11-13方向校准配置）；param2 横滚仅显示，0x0072 没有横滚指令字段。
 - 每条有效205立即发送11字节厂家帧：FB 2C AA 06 72 00 [方位INT16小端] [俯仰INT16小端] [XOR]。角度乘100四舍五入；XOR覆盖 LEN 到最后一个数据字节，共7字节。
 - 仅检查浮点数有限性和厂家编码范围：方位 -179～179°，俯仰 -120～90°。超出范围拒绝整条指令，不截断或限幅成其他方向。
-- 发回标准 COMMAND_ACK：0=UART2发送成功，2=角度不可编码，3=param7模式不支持，4=UART2发送失败。ACK不表示吊舱已执行完毕。
+- 发回标准 COMMAND_ACK：0=UART2发送成功，1=厂家 UI 接管期间暂不执行，2=角度不可编码，3=param7模式不支持，4=UART2发送失败。ACK不表示吊舱已执行完毕。
 - USART3 输出控制目标 CTRL，以及原有 SYS、FRAME、ATT、TARGET 四类反馈。控制日志和状态日志分别最多5Hz，显示最新数据；控制命令发送不受日志周期调度。
-- 本版移除旧 ROI 经纬高转换、ID86目标位置上报和自动激光控制。USART1 接收厂家原始命令时不会透传到吊舱。
+- 地图指向使用飞控计算的目标角度，测距仍由厂家 UI 控制。USART1 接收厂家原始命令时不会透传到吊舱。
 
 ## 方向调整
 

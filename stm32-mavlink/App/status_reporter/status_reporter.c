@@ -10,13 +10,15 @@ void StatusReporter_Init(StatusReporter_t *bridge, StatusWrite_t write_text, voi
     bridge->context = context;
 }
 
-void StatusReporter_FeedStatus(StatusReporter_t *bridge, uint8_t byte) {
+bool StatusReporter_FeedStatus(StatusReporter_t *bridge, uint8_t byte) {
     VendorParseResult_t result = Vendor_ParseByte(&bridge->parser, byte);
     /* Only a complete 60-byte 0x0014 data block may be decoded as status. */
     if (result == VENDOR_PARSE_RESULT_STATUS_OK && bridge->parser.length == 62 &&
         Vendor_ExtractStatus(bridge->parser.payload, &bridge->status)) {
         bridge->status_pending = true;
+        return true;
     }
+    return false;
 }
 
 bool StatusReporter_Report(StatusReporter_t *bridge, uint32_t now_ms) {

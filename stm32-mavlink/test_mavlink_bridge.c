@@ -12,7 +12,7 @@
 
 typedef struct {
     unsigned flight_calls, gimbal_calls;
-    uint8_t flight[32], gimbal[11];
+    uint8_t flight[64], gimbal[11];
     uint16_t flight_length;
     char text[512];
     bool flight_fails, gimbal_fails, text_fails;
@@ -41,6 +41,19 @@ static bool write_text(void *context, const uint8_t *data, uint16_t length) {
     memcpy(capture->text, data, length);
     capture->text[length] = '\0';
     return !capture->text_fails;
+}
+
+static void check_tx_trace(const Capture_t *capture, unsigned msgid, const char *result,
+                           const uint8_t *wire, uint16_t length) {
+    char expected[512];
+    int offset = snprintf(expected, sizeof(expected),
+        "[UART1_TX] msgid=%u len=%u result=%s hex=", msgid, (unsigned)length, result);
+    for (uint16_t i = 0; i < length; i++) {
+        offset += snprintf(expected + offset, sizeof(expected) - offset,
+            "%s%02X", i == 0 ? "" : " ", (unsigned)wire[i]);
+    }
+    snprintf(expected + offset, sizeof(expected) - offset, "\r\n");
+    CHECK(strcmp(capture->text, expected) == 0);
 }
 
 static void init(MAVLinkBridge_t *bridge, Capture_t *capture) {
@@ -75,14 +88,14 @@ static void check_ack(const Capture_t *capture, uint8_t result) {
     CHECK(wire_crc(wire + 1, 19, 143) == ((uint16_t)wire[20] | (uint16_t)wire[21] << 8));
 }
 
-static uint16_t command(uint8_t *wire, float pitch, float roll, float yaw,
-                        float mode, uint8_t src_sys, uint8_t src_comp,
-                        uint8_t dst_sys, uint8_t dst_comp, bool v1, uint8_t confirm) {
+static uint16_t encode_command(uint8_t *wire, uint16_t id, float pitch, float roll, float yaw,
+                               float mode, uint8_t src_sys, uint8_t src_comp,
+                               uint8_t dst_sys, uint8_t dst_comp, bool v1, uint8_t confirm) {
     mavlink_message_t message;
     mavlink_status_t status = {0};
     mavlink_command_long_t payload = {0};
     status.flags = v1 ? MAVLINK_STATUS_FLAG_OUT_MAVLINK1 : 0;
-    payload.command = 205;
+    payload.command = id;
     payload.param1 = pitch;
     payload.param2 = roll;
     payload.param3 = yaw;
@@ -92,6 +105,27 @@ static uint16_t command(uint8_t *wire, float pitch, float roll, float yaw,
     payload.confirmation = confirm;
     mavlink_msg_command_long_encode_status(src_sys, src_comp, &status, &message, &payload);
     return mavlink_msg_to_send_buffer(wire, &message);
+}
+
+static uint16_t command(uint8_t *wire, float pitch, float roll, float yaw,
+                        float mode, uint8_t src_sys, uint8_t src_comp,
+                        uint8_t dst_sys, uint8_t dst_comp, bool v1, uint8_t confirm) {
+    return encode_command(wire, 205, pitch, roll, yaw, mode, src_sys, src_comp,
+                          dst_sys, dst_comp, v1, confirm);
+}
+
+static void set_owner(MAVLinkBridge_t *bridge, float ui, uint8_t src_sys, uint8_t dst_comp) {
+    uint8_t wire[64];
+    uint16_t length = encode_command(wire, 31010, ui, 0, 0, 0, src_sys, 190,
+                                     1, dst_comp, false, 0);
+    feed(bridge, wire, length);
+}
+
+static void new_point(MAVLinkBridge_t *bridge, float id) {
+    uint8_t wire[64];
+    uint16_t length = encode_command(wire, 31011, id, 0, 0, 0, 255, 190,
+                                     1, 154, false, 0);
+    feed(bridge, wire, length);
 }
 
 static uint16_t mount_command(uint8_t *wire, float pitch, float yaw) {
@@ -107,16 +141,28 @@ static void test_heartbeat_sequence_and_wrap(void) {
                                 0, 0, 0, 0, 26, 8, 0, 4, 3, 0x1A, 0xCF};
     CHECK(capture.flight_length == sizeof(expected));
     CHECK(memcmp(capture.flight, expected, sizeof(expected)) == 0);
+    CHECK(MAVLink_ReportTx(&bridge, write_text, 0));
+    check_tx_trace(&capture, 0, "sent", expected, sizeof(expected));
     CHECK(!MAVLink_SendHeartbeatIfDue(&bridge, 999));
     uint8_t wire[MAVLINK_MAX_PACKET_LEN];
     uint16_t length = mount_command(wire, 0, 10);
     feed(&bridge, wire, length);
     check_ack(&capture, 0);
     CHECK(capture.flight[4] == 1);
+    CHECK(MAVLink_ReportTx(&bridge, write_text, 999));
+    check_tx_trace(&capture, 77, "sent", capture.flight, capture.flight_length);
     CHECK(MAVLink_SendHeartbeatIfDue(&bridge, 1000) && capture.flight[4] == 2);
+    CHECK(MAVLink_ReportTx(&bridge, write_text, 1000));
+    feed(&bridge, wire, length);
+    feed(&bridge, wire, length);
+    CHECK(!MAVLink_ReportTx(&bridge, write_text, 999 + CONTROL_TEXT_PERIOD_MS - 1U));
+    CHECK(MAVLink_ReportTx(&bridge, write_text, 999 + CONTROL_TEXT_PERIOD_MS));
+    check_tx_trace(&capture, 77, "sent", capture.flight, capture.flight_length);
     init(&bridge, &capture);
     capture.flight_fails = true;
     CHECK(!MAVLink_SendHeartbeatIfDue(&bridge, UINT32_MAX - 500U));
+    CHECK(MAVLink_ReportTx(&bridge, write_text, UINT32_MAX - 500U));
+    check_tx_trace(&capture, 0, "uart1_error", capture.flight, capture.flight_length);
     capture.flight_fails = false;
     CHECK(MAVLink_SendHeartbeatIfDue(&bridge, UINT32_MAX - 500U));
     CHECK(!MAVLink_SendHeartbeatIfDue(&bridge, 498));
@@ -282,23 +328,222 @@ static void test_signed_packets_unknown_frames_and_noise(void) {
     CHECK(strstr(capture.text, "ack=uart1_error") != NULL);
 }
 
-static void test_actual_capture(const char *path) {
-    FILE *file = fopen(path, "r");
-    CHECK(file != NULL);
+static void test_ui_control_handoff(void) {
     Capture_t capture;
     MAVLinkBridge_t bridge;
+    uint8_t wire[64];
     init(&bridge, &capture);
+    uint16_t length = mount_command(wire, -15.0f, 20.0f);
+    feed(&bridge, wire, length);
+    CHECK(capture.gimbal_calls == 1);
+
+    CHECK(MAVLink_ReportControlOwner(&bridge, write_text));
+    CHECK(strcmp(capture.text, "[MODE] owner=flight\r\n") == 0);
+    set_owner(&bridge, 1, 1, 154);    /* An angle sender cannot change ownership. */
+    set_owner(&bridge, 1, 255, 0);    /* Broadcast must be ignored. */
+    set_owner(&bridge, 2, 255, 154);  /* Reject unsupported modes. */
+    CHECK(!MAVLink_ReportControlOwner(&bridge, write_text));
+    feed(&bridge, wire, length);
+    CHECK(capture.gimbal_calls == 2);
+
+    set_owner(&bridge, 1, 255, 154);
+    CHECK(MAVLink_ReportControlOwner(&bridge, write_text));
+    CHECK(strcmp(capture.text, "[MODE] owner=ui\r\n") == 0);
+    feed(&bridge, wire, length);
+    CHECK(capture.gimbal_calls == 2);
+    check_ack(&capture, 1);
+    CHECK(MAVLink_Report(&bridge, write_text, 0));
+    CHECK(strstr(capture.text, "result=ui_control") != NULL);
+    CHECK(MAVLink_SendHeartbeatIfDue(&bridge, 1000));
+    CHECK(capture.flight[7] == 0);
+
+    set_owner(&bridge, 0, 255, 154);
+    CHECK(MAVLink_ReportControlOwner(&bridge, write_text));
+    CHECK(strcmp(capture.text, "[MODE] owner=flight\r\n") == 0);
+    CHECK(capture.gimbal_calls == 2);
+    length = mount_command(wire, -30.0f, 40.0f);
+    feed(&bridge, wire, length);
+    CHECK(capture.gimbal_calls == 3);
+    CHECK(Vendor_ReadLE_Int16(capture.gimbal + 6) == 4000 * GIMBAL_YAW_SIGN);
+    check_ack(&capture, 0);
+}
+
+static void test_auto_pause_and_next_point(void) {
+    MAVLinkBridge_t bridge;
+    Capture_t capture;
+    uint8_t wire[64];
+    init(&bridge, &capture);
+    MAVLink_ConfigureAutomation(&bridge, true, false);
+    uint16_t length = mount_command(wire, -10.0f, 20.0f);
+    feed(&bridge, wire, length);
+    CHECK(capture.gimbal_calls == 0);
+
+    new_point(&bridge, 10);
+    CHECK(bridge.task.waiting_angle);
+    feed(&bridge, wire, length);
+    CHECK(capture.gimbal_calls == 1);
+    GimbalStatus_t feedback = {.valid = true, .gimbal_ready = 1, .servo_state = 4,
+        .azimuth_deg100 = 2000 * GIMBAL_YAW_SIGN, .pitch_deg100 = -1000 * GIMBAL_PITCH_SIGN};
+    for (uint32_t tick = 100; tick <= 500; tick += 100) {
+        MAVLink_UpdateTime(&bridge, tick);
+        MAVLink_ObserveGimbal(&bridge, &feedback);
+        CHECK(bridge.task.aiming);
+    }
+    /* A stale interval must restart the dwell, even if the next frame agrees. */
+    for (uint32_t tick = 650; tick <= 1150; tick += 100) {
+        MAVLink_UpdateTime(&bridge, tick);
+        MAVLink_ObserveGimbal(&bridge, &feedback);
+        CHECK(bridge.task.aiming == (tick < 1150));
+    }
+    CHECK(bridge.ui_control && strcmp(bridge.point_event, "arrived") == 0);
+    new_point(&bridge, 10);
+    new_point(&bridge, 9);
+    length = mount_command(wire, 12.0f, 25.0f);
+    feed(&bridge, wire, length);
+    CHECK(capture.gimbal_calls == 1);
+    new_point(&bridge, 11);
+    feed(&bridge, wire, length);
+    CHECK(capture.gimbal_calls == 2);
+    CHECK(Vendor_ReadLE_Int16(capture.gimbal + 6) == 2500 * GIMBAL_YAW_SIGN);
+    MAVLink_UpdateTime(&bridge, 1150 + POINTING_TIMEOUT_MS);
+    feed(&bridge, wire, length);
+    CHECK(capture.gimbal_calls == 2 && strcmp(bridge.point_event, "not_settled") == 0);
+
+    init(&bridge, &capture);
+    MAVLink_ConfigureAutomation(&bridge, false, false);
+    new_point(&bridge, 1);
+    feed(&bridge, wire, length);
+    CHECK(capture.gimbal_calls == 0);
+    CHECK(strcmp(bridge.point_event, "probe_first_205") == 0);
+    CHECK(bridge.first_yaw_deg100 == 2500 * GIMBAL_YAW_SIGN);
+}
+
+static void observe(MAVLinkBridge_t *bridge, uint32_t ms, const GimbalStatus_t *status) {
+    MAVLink_UpdateTime(bridge, ms);
+    MAVLink_ObserveGimbal(bridge, status);
+}
+
+static void test_tracking_position_setpoint(void) {
+    MAVLinkBridge_t bridge;
+    Capture_t capture;
+    init(&bridge, &capture);
+    MAVLink_ConfigureAutomation(&bridge, false, true);
+    set_owner(&bridge, 0, 255, 154);
+    GimbalStatus_t status = {.valid = true, .gimbal_ready = 1, .tracking_state = TRACKING_STABLE,
+        .target_lat_e7 = 310256426, .target_lon_e7 = 1214439048, .target_alt_m = 1,
+        .laser_distance_dm = 180};
+    status.tracking_state = TRACKING_MEMORY;
+    observe(&bridge, 100, &status);
+    CHECK(capture.flight_calls == 0);
+    status.tracking_state = TRACKING_STABLE;
+    status.laser_distance_dm = 0;
+    observe(&bridge, 120, &status);
+    CHECK(capture.flight_calls == 0);
+    status.laser_distance_dm = 180;
+    observe(&bridge, 200, &status);
+    CHECK(capture.flight_calls == 1);
+    /* MAVLink2 trims the final coordinate_frame byte when it is GLOBAL (0). */
+    CHECK(capture.flight_length == 64 && capture.flight[1] == 52);
+    CHECK(capture.flight[0] == 0xFD && capture.flight[5] == 1 && capture.flight[6] == 154);
+    CHECK(capture.flight[7] == 86 && capture.flight[8] == 0 && capture.flight[9] == 0);
+    CHECK(wire_crc(capture.flight + 1, 61, 5) ==
+        ((uint16_t)capture.flight[62] | (uint16_t)capture.flight[63] << 8));
+    CHECK(Vendor_ReadLE_Int32(capture.flight + 10) == 200);
+    CHECK(Vendor_ReadLE_Int32(capture.flight + 14) == 310256426);
+    CHECK(Vendor_ReadLE_Int32(capture.flight + 18) == 1214439048);
+    float altitude;
+    memcpy(&altitude, capture.flight + 22, sizeof(altitude));
+    CHECK(altitude == 1.0f);
+    for (size_t i = 26; i < 58; i++) {
+        CHECK(capture.flight[i] == 0);
+    }
+    CHECK(Vendor_ReadLE_UInt16(capture.flight + 58) == 0x0DF8);
+    CHECK(capture.flight[60] == 1 && capture.flight[61] == 1);
+    uint8_t expected[64];
+    memcpy(expected, capture.flight, sizeof(expected));
+    CHECK(MAVLink_ReportTx(&bridge, write_text, 200));
+    check_tx_trace(&capture, 86, "sent", expected, sizeof(expected));
+    CHECK(!MAVLink_ReportTx(&bridge, write_text, 201));
+    observe(&bridge, 1200, &status);
+    CHECK(capture.flight_calls == 1);
+
+    status.laser_distance_dm = 130;
+    status.target_lon_e7 = 1214438172;
+    observe(&bridge, 1220, &status);
+    CHECK(capture.flight_calls == 2);
+    CHECK(Vendor_ReadLE_Int32(capture.flight + 18) == 1214438172);
+
+    status.laser_distance_dm = 150;
+    observe(&bridge, 1240, &status);
+    CHECK(capture.flight_calls == 2);
+    status.tracking_state = TRACKING_LOST;
+    observe(&bridge, 2220, &status);
+    CHECK(capture.flight_calls == 2);
+    status.tracking_state = TRACKING_STABLE;
+    observe(&bridge, 2240, &status);
+    CHECK(capture.flight_calls == 3);
+    CHECK(bridge.ranging.last_attempt.laser_distance_dm == 150);
+
+    /* A single measurement uses the same validity and duplicate checks. */
+    status.cmd_echo = 0x3D;
+    observe(&bridge, 3240, &status);
+    CHECK(capture.flight_calls == 3);
+    status.laser_distance_dm = 170;
+    capture.flight_fails = true;
+    observe(&bridge, 3260, &status);
+    CHECK(capture.flight_calls == 4);
+    CHECK(strcmp(bridge.range_event, "uart1_error") == 0);
+    capture.flight_fails = false;
+    observe(&bridge, 3280, &status);
+    CHECK(capture.flight_calls == 4);
+    observe(&bridge, 4260, &status);
+    CHECK(capture.flight_calls == 5);
+    CHECK(strcmp(bridge.range_event, "sent_86") == 0);
+    observe(&bridge, 5260, &status);
+    CHECK(capture.flight_calls == 5);
+
+    init(&bridge, &capture);
+    MAVLink_ConfigureAutomation(&bridge, false, false);
+    status.cmd_echo = 0;
+    status.laser_distance_dm = 180;
+    status.target_lon_e7 = 1214439048;
+    observe(&bridge, 200, &status);
+    CHECK(capture.flight_calls == 0);
+    CHECK(strcmp(bridge.range_event, "probe_86") == 0);
+    CHECK(MAVLink_SendHeartbeatIfDue(&bridge, 200) && capture.flight[4] == 0);
+    CHECK(MAVLink_ReportTx(&bridge, write_text, 200));
+    check_tx_trace(&capture, 86, "probe", expected, sizeof(expected));
+    CHECK(MAVLink_ReportTx(&bridge, write_text, 201));
+    check_tx_trace(&capture, 0, "sent", capture.flight, capture.flight_length);
+}
+
+static void replay_capture(MAVLinkBridge_t *bridge, const char *path) {
+    FILE *file = fopen(path, "r");
+    CHECK(file != NULL);
     unsigned byte;
     while (fscanf(file, "%x", &byte) == 1) {
         CHECK(byte <= 255);
-        MAVLink_FeedByte(&bridge, (uint8_t)byte);
+        MAVLink_FeedByte(bridge, (uint8_t)byte);
     }
     CHECK(feof(file));
     fclose(file);
+}
+
+static void test_actual_capture(const char *path) {
+    Capture_t capture;
+    MAVLinkBridge_t bridge;
+    init(&bridge, &capture);
+    replay_capture(&bridge, path);
     CHECK(capture.gimbal_calls == 70 && capture.flight_calls == 70);
     CHECK(Vendor_ReadLE_Int16(capture.gimbal + 6) == 7036 * GIMBAL_YAW_SIGN);
     CHECK(Vendor_ReadLE_Int16(capture.gimbal + 8) == 19 * GIMBAL_PITCH_SIGN);
     check_ack(&capture, 0);
+
+    init(&bridge, &capture);
+    set_owner(&bridge, 1, 255, 154);
+    replay_capture(&bridge, path);
+    CHECK(capture.gimbal_calls == 0 && capture.flight_calls == 70);
+    check_ack(&capture, 1);
 }
 
 int main(int argc, char **argv) {
@@ -309,9 +554,12 @@ int main(int argc, char **argv) {
     test_mode_finite_range_and_send_failure();
     test_report_coalesces_and_retries();
     test_signed_packets_unknown_frames_and_noise();
+    test_ui_control_handoff();
+    test_auto_pause_and_next_point();
+    test_tracking_position_setpoint();
     if (argc == 2) {
         test_actual_capture(argv[1]);
     }
-    puts("MAVLink bridge: 7 groups + optional 70-frame capture PASS");
+    puts("MAVLink bridge: handoff, dwell, tracking ID86, TX traces and 70-frame replay PASS");
     return 0;
 }
