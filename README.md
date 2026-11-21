@@ -6,7 +6,7 @@
 
 - **地图指向**。Mission Planner 点选位置，插件通知 STM32 开始新任务。飞控经 TELEM2 发角度命令 205，STM32 转为厂家数引 `0x0072`，到位后暂停转发，由厂家 UI 跟踪。
 - **坐标回传**。厂家 UI 触发单次或连续测距。稳定跟踪时，STM32 将有效经纬高封装为 MAVLink2 `SET_POSITION_TARGET_GLOBAL_INT`（ID 86），经 USART1 发给飞控 TELEM2。
-- **调试输出**。USART3 显示吊舱状态、距离、经纬高及 USART1 发出的原始帧。接线、参数和操作步骤见 [HARDWARE_NATIVE.md](HARDWARE_NATIVE.md)。
+- **调试输出**。USART3 显示吊舱状态、距离、经纬高及 USART1 发出的原始帧。插件安装、烧录、接线和操作见 [吊舱协议转换板使用说明](docs/吊舱协议转换板使用说明.md)。
 
 ## 代码结构
 
@@ -48,6 +48,6 @@ python tools/run_host_tests.py
 
 地图指向、到位停发、厂家 UI 跟踪和测距已完成台架测试。此前的 ID 276 开发阶段已验证 STM32 发包。当前 ID 86 已通过 Release 编译和主机回归，最新固件的实机发包和飞控收包仍待确认。ID 86 可作为飞行位置设定值，先在未解锁台架或 SITL 验证。
 
-早期厂家命令透传版见 [HARDWARE_BENCH.md](HARDWARE_BENCH.md)，提交 `9d45e11` 是原生 MAVLink 指向的历史交付版本。
+早期厂家命令透传及原生 MAVLink 指向资料可从历史交付提交 `9d45e11` 查看。
 
-本地提交、合并和版本发布流程见 [docs/RELEASING.md](docs/RELEASING.md)，历史记录见 [CHANGELOG.md](CHANGELOG.md)。
+本地提交、合并和版本发布流程见 [发布说明](docs/RELEASING.md)。
