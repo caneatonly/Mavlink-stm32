@@ -1,18 +1,12 @@
 # STM32 MAVLink ↔ TZ130TM 原生云台适配
 
-本实机工作树采用 ArduPilot 原生 SToRM32 MAVLink 控制路线：
-
-Mission Planner 点选目标 → 飞控计算角度 → TELEM2 / STM32 USART1 → 解析 COMMAND_LONG / DO_MOUNT_CONTROL（205）→ USART2 发送厂家数引 0x0072 → 吊舱。
-
-USART3 向电脑输出控制目标和吊舱反馈。接线、参数、方向调整和操作步骤见 **[HARDWARE_NATIVE.md](HARDWARE_NATIVE.md)**。
+本项目用 STM32 转接 ArduPilot 和 TZ130TM 吊舱。日常查看源码、编译与交付均从检出 `master` 的工作树进行。本机对应 `master-integration`。用 `git worktree list` 可核对每个目录检出的分支和提交。
 
 ## 当前实现
 
-- 1Hz 主动云台心跳，身份 sysid=1 / compid=154。
-- 标准 MAVLink 流解析、CRC校验、32字节截断载荷补零、地址过滤和命令 ACK。
-- 方位/俯仰角转换为厂家11字节数引帧，两轴方向系数可独立配置。
-- USART3 最多5Hz显示 CTRL、SYS、FRAME、ATT、TARGET。
-- 已移除旧 ROI 经纬高转换、ID86上报及自动激光控制。
+- **地图指向**。Mission Planner 点选位置，插件通知 STM32 开始新任务。飞控经 TELEM2 发角度命令 205，STM32 转为厂家数引 `0x0072`，到位后暂停转发，由厂家 UI 跟踪。
+- **坐标回传**。厂家 UI 触发单次或连续测距。稳定跟踪时，STM32 将有效经纬高封装为 MAVLink2 `SET_POSITION_TARGET_GLOBAL_INT`（ID 86），经 USART1 发给飞控 TELEM2。
+- **调试输出**。USART3 显示吊舱状态、距离、经纬高及 USART1 发出的原始帧。接线、参数和操作步骤见 [HARDWARE_NATIVE.md](HARDWARE_NATIVE.md)。
 
 ## 代码结构
 
@@ -24,22 +18,36 @@ USART3 向电脑输出控制目标和吊舱反馈。接线、参数、方向调�
 - stm32-mavlink/ThirdParty/mavlink：本地包含的标准 MAVLink 头文件子集。
 - stm32-mavlink/tools/run_host_tests.py：主机回归测试入口。
 
-## 构建
+## 固件配置
 
-在 stm32-mavlink 目录执行：
+当前源码的两种 Release 配置都使用 ID 86。切换时选择对应的 HEX，或用同一份源码按下表重新构建。
+
+| 配置 | 自动地图指向 | USART1 坐标回传 | 用途 |
+| --- | --- | --- | --- |
+| 探测版 | OFF | OFF，USART3 预览 ID 86 | 检查点选通知、角度和封包 |
+| 启用版 | ON | ON，向 TELEM2 发送 ID 86 | 未解锁台架端到端测试 |
+
+在 `stm32-mavlink` 目录执行所需配置的命令。
 
 ```powershell
-cmake --preset Release
+# 探测版，输出到 build/Release
+cmake --preset Release -DENABLE_POINTING_AUTO_RESUME=OFF -DENABLE_RANGE_REPORT=OFF
 cmake --build --preset Release
+
+# 启用版，输出到 build/Release-enabled
+cmake --preset Release -B build/Release-enabled -DENABLE_POINTING_AUTO_RESUME=ON -DENABLE_RANGE_REPORT=ON
+cmake --build build/Release-enabled
+
+# 主机回归
 python tools/run_host_tests.py
 ```
 
-固件：build/Release/tz130tm-native.hex。主机测试需要GCC；ARM构建需要CMake、Ninja和arm-none-eabi工具链。所有串口115200 8N1。
+两种构建的原始文件均名为 `tz130tm-native.hex`。对外交付时，文件名应标明探测或启用配置及 Git 提交。主机回归需要 GCC，ARM 构建需要 CMake、Ninja 和 arm-none-eabi 工具链。所有串口为 115200 8N1。
 
 ## 验证状态
 
-Debug/Release构建、主机协议测试、70帧真实抓包回放和四种方向系数组合已通过。用户于2026-11-13报告：双轴取反版本已实机运行，Mission Planner地图点选到吊舱运动的控制链路正常跑通。零位、参考系、目标指向精度及机动飞行效果尚未量化验证。
+地图指向、到位停发、厂家 UI 跟踪和测距已完成台架测试。此前的 ID 276 开发阶段已验证 STM32 发包。当前 ID 86 已通过 Release 编译和主机回归，最新固件的实机发包和飞控收包仍待确认。ID 86 可作为飞行位置设定值，先在未解锁台架或 SITL 验证。
 
-此前的厂家原始命令透传固件说明保留在 [HARDWARE_BENCH.md](HARDWARE_BENCH.md)，旧 tz130tm-bench.hex 未被新固件覆盖。
+早期厂家命令透传版见 [HARDWARE_BENCH.md](HARDWARE_BENCH.md)，提交 `9d45e11` 是原生 MAVLink 指向的历史交付版本。
 
-本地提交、合并和版本发布流程见 [docs/RELEASING.md](docs/RELEASING.md)，当前功能与验证范围见 [CHANGELOG.md](CHANGELOG.md)。
+本地提交、合并和版本发布流程见 [docs/RELEASING.md](docs/RELEASING.md)，历史记录见 [CHANGELOG.md](CHANGELOG.md)。
